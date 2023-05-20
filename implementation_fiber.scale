@@ -1,0 +1,147 @@
+package cs320
+
+import Value._
+
+object Implementation extends Template {
+  private def intVop(op : (BigInt, BigInt) => BigInt): (Value,Value) => Value = {
+    case (IntV(a), IntV(b)) => IntV(op(a, b))
+    case _ => error("not a number")
+  }
+  private def booVop(op : (BigInt, BigInt) => Boolean): (Value,Value) => Value = {
+    case (IntV(a), IntV(b)) => BooleanV(op(a, b))
+    case _ => error("not a number")
+  }
+  private val intAdd = intVop(_ + _)
+  private val intMul = intVop(_ * _)
+  private val intDiv = intVop(_ / _)
+  private val intMod = intVop(_ % _)
+  private val booEq = booVop(_ == _)
+  private val booLt = booVop(_ < _)
+
+
+  def interp(expr: Expr): Value = {
+    def inter(expr: Expr, env: Env): Value = expr match {
+      case Id(name) => env.getOrElse(name, error("don't have that name"))
+      case IntE(n) => IntV(n)
+      case BooleanE(b) => BooleanV(b)
+      case Add(l, r) => intAdd(inter(l, env) , inter(r, env))
+      case Mul(l, r) => intMul(inter(l, env) , inter(r, env))
+      case Div(l, r) => if (inter(r, env) == IntV(0)) error("can not be 0") else intDiv(inter(l, env), inter(r, env))
+      case Mod(l, r) => if (inter(r, env) == IntV(0)) error("can not be 0") else intMod(inter(l, env), inter(r, env))
+      case Eq(l, r) => booEq(inter(l, env), inter(r, env))
+      case Lt(l, r) => booLt(inter(l, env), inter(r, env))
+      case If(c, l, r) => inter(c, env) match {
+        case BooleanV(true) => inter(l, env)
+        case BooleanV(false) => inter(r, env)
+        case _ => error("not a condition in if") 
+      }
+      case TupleE(li) => {
+        val v= li.foldRight[List[Value]](Nil)((a,b) => (inter(a, env) :: b))
+        TupleV(v)
+      }
+      case Proj(ex, i) => {
+        val v= inter(ex, env)
+        v match {
+          case TupleV(a) => {
+            if (a.size >= i) a(i-1)
+            else error("out of range of tuple")
+          }
+          case _ => error("not a tuple")
+        }
+      }
+      case NilE => NilV
+      case ConsE(h, t) => {
+        val vo = inter(h, env)
+        val vs = inter(t, env)
+        vs match {
+          case NilV => ConsV(vo, NilV)
+          case ConsV(a, b) => ConsV(vo, vs)
+          case _ => error("not a list, conse")
+        }
+      }
+      case Empty(ex) => {
+        val v= inter(ex, env)
+        v match {
+          case NilV => BooleanV(true)
+          case ConsV(h, t) => BooleanV(false)
+          case _ => error("not a list in empty")
+        }
+      }
+      case Head(ex) => {
+        inter(ex,env) match {
+          case ConsV(h,t) => h
+          case _ => error("not a nonemplty list head")
+        }
+      }
+      case Tail(ex) => {
+        inter(ex,env) match {
+          case ConsV(h, t) => t
+          case _ => error("not a nonempty list tail")
+        }
+      }
+      case Val(name, ex, body) => {
+        val v= inter(ex, env)
+        inter(body, env + (name -> v))
+      }
+      case Fun(args, body) => CloV(args, body, env)
+      case RecFuns(funs, body) => {
+        val x= funs.foldRight[List[String]](Nil){(a,b) => {
+          a match {
+            case FunDef(name, params, bo) => name :: b
+            }
+        }}
+        val v= funs.foldRight[List[CloV]](Nil){(a,b) => {
+          a match {
+            case FunDef(name, params, bo) => CloV(params,bo,env) :: b
+          }
+        }}
+        val ienv= env ++ (x zip v).toMap
+        for (i <- v) {
+          i match {
+            case CloV(params, bo, envv) => {
+              i.env= env ++ (x zip v).toMap
+            }
+            case _ => "not a fic"
+          }
+        }
+        inter(body, ienv)
+      }
+      case App(fun, args) => {
+        val v= inter(fun, env)
+        v match {
+          case CloV(paras, body, envv) => {
+            if (paras.length != args.length) error("wrong arity")
+            else {
+              val v= args.foldRight[List[Value]](Nil)(inter(_, env) :: _)
+              val l= (paras zip v).toMap
+              inter(body, envv ++ l)
+            }
+          }
+          case _ => error("not a function")
+        }
+      }
+      case Test(ex, typ) => {
+        val v= con(inter(ex, env))
+        (v,typ) match {
+          case (IntT,IntT) => BooleanV(true)
+          case (BooleanT, BooleanT) => BooleanV(true)
+          case (TupleT, TupleT) => BooleanV(true)
+          case (ListT, ListT) => BooleanV(true)
+          case (FunctionT, FunctionT) => BooleanV(true)
+          case (_,_) => BooleanV(false)
+        }
+      }
+    }
+    inter(expr, Map())
+  }
+  private def con(a: Value) :Type = a match {
+    case IntV(x) => IntT 
+    case BooleanV(x) => BooleanT
+    case TupleV(x) => TupleT
+    case NilV => ListT 
+    case ConsV(h, t) => ListT
+    case CloV(f,x,e) => FunctionT
+    case _ => error("not a value")
+  }
+}
+
