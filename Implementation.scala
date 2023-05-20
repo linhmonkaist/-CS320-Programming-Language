@@ -1,37 +1,47 @@
 package cs320
 
+import Value._
+
 object Implementation extends Template {
-
-  // apply a binary numeric function on all the combinations of numbers from
-  // the two input lists, and return the list of all the results
-  def binOp(
-    op: (Int, Int) => Int,
-    ls: List[Int],
-    rs: List[Int]
-  ): List[Int] = ls match {
-    case Nil => Nil
-    case l :: rest =>
-      def f(r: Int): Int = op(l,r)
-      rs.map(f) ++ binOp(op, rest, rs)
-  }
-
-  def interp(expr: Expr): List[Int] = {
-    def aux(expr: Expr,env: Map[String, List[Int]]): List[Int]= expr match {
-      case Num(values) => values
-      case Add(left,right) => binOp((x,y) => x+y, aux(left,env), aux(right,env))
-      case Sub(left,right) => binOp((x,y) => x-y, aux(left,env), aux(right,env))
-      case Val(name,expr,body) => aux(body, env + (name -> aux(expr, env)))
-      case Id(value) => env.getOrElse(value,error("free identifier"))
-      case Min(l,m,r) => {
-        val v= binOp( (x,y) => x.min(y), aux(l,env),aux(m,env))
-        binOp(_ min _ , v, aux(r, env))
-      }
-      case Max(l,m,r) => if ((aux(l,env).head >= aux(m, env).head) & (aux(l,env).head >= aux(r,env).head)) {aux(l,env);}
-                            else {
-                              if ((aux(m, env).head > aux(l, env).head) & (aux(m, env).head >= aux(r, env).head)) {aux(m,env);}
-                              else {(aux(r, env));}
-                            }
+  def binOp(op: (Int,Int) => Int ) = {
+    (l: Value, r: Value) => (l, r) match {
+      case (NumV(l),NumV(r)) => NumV(op(l,r))
+      case (l,r) => error(s"not both number: $l, $r")
     }
-    aux(expr, Map())
   }
+  val numAdd = binOp(_ + _)
+  val numSub = binOp(_ - _)
+
+  def interp(expr: Expr): Value = {
+    def aux(expr: Expr, env: Env): Value= expr match {
+    case Num(num) => NumV(num)
+    case Add(l,r) => numAdd(aux(l,env),aux(r,env))
+    case Sub(left, right) => numSub(aux(left,env), aux(right,env))
+    case Val(name,value,body) => aux(body, env + (name -> aux(value,env)))
+    case Id(name) => env.getOrElse(name,error("free identifiers: $name"))
+    case App(func,args) => aux(func, env) match {
+        case CloV(params, body, envv) => {
+          if (params.length != args.length) error("wrong arity")
+          else {
+            val l = args.map(aux(_, env))
+            val arg= (params zip l)
+            aux(body, envv ++ arg)
+          }
+        }
+        case _ => error("not a closure")
+      }
+    case Fun(params, body) => CloV(params, body, env)
+    case Rec(rec) => {
+      RecV(rec.map {
+        case (f,e) => (f, aux(e, env))
+      })
+    }
+    case Acc(expr, name) => aux(expr, env) match {
+      case RecV(rec) => rec.getOrElse(name, error("no such field: $name")) 
+      case _ => error("not a record")
+      }
+    }
+    aux(expr,Map())
+  }
+
 }
